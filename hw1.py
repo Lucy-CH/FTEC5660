@@ -76,16 +76,20 @@ def build_chain() -> Any:
                 """
                     You are a precise receipt data extraction engine. The provided image is a receipt.
 
-                    Extract the following two monetary fields and return ONLY a JSON object with no additional text, markdown, or explanation.
+                    Extract monetary values exactly as they appear or can be directly read from the receipt.
+                    DO NOT perform any arithmetic. DO NOT add, subtract, sum, or compute anything.
+                    Return ONLY a JSON object with no additional text, markdown, or explanation.
 
                     Field definitions:
                     - "amount_paid_after_rounding": The final amount the customer actually paid after any rounding adjustments.
-                    - "amount_without_discounts": The sum of original positive item prices before all discounts. Add back promotions, coupons, member discounts, app discounts, packaging-damage discounts, and percentage discounts. Do not add back rounding.
+                    - "subtotal_after_discounts_before_rounding": The receipt subtotal after all discounts but before the final rounding adjustment.
+                    - "discounts": A list of all discount amounts shown on the receipt. Include promotions, coupons, member discounts, app discounts, packaging-damage discounts, and percentage discounts. Store each discount as a positive number even if it is printed with a minus sign. Use an empty list if there is no discount.
 
                     Output format (JSON only):
                     {{
                     "amount_paid_after_rounding": <number>,
-                    "amount_without_discounts": <number>
+                    "subtotal_after_discounts_before_rounding": <number>,
+                    "discounts": [<number>, <number>]
                     }}
                 """,
             ),
@@ -131,8 +135,21 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
 
     for response in responses:
         data = json.loads(response_text(response))
-        total_spent += Decimal(str(data["amount_paid_after_rounding"]))
-        total_without_discount += Decimal(str(data["amount_without_discounts"]))
+        amount_paid = Decimal(str(data["amount_paid_after_rounding"])).quantize(
+            Decimal("0.01")
+        )
+        subtotal_before_rounding = Decimal(
+            str(data["subtotal_after_discounts_before_rounding"])
+        ).quantize(Decimal("0.01"))
+        discounts = [
+            abs(Decimal(str(value))).quantize(Decimal("0.01"))
+            for value in data.get("discounts", [])
+        ]
+
+        total_spent += amount_paid
+        total_without_discount += subtotal_before_rounding + sum(
+            discounts, Decimal("0.00")
+        )
 
     return {
         QUERY_1: f"HK${total_spent:.2f}",
