@@ -13,7 +13,6 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-
 QUERY_1 = "How much money did I spend in total for these bills?"
 QUERY_2 = "How much would I have had to pay without the discount?"
 QUERIES = (QUERY_1, QUERY_2)
@@ -62,8 +61,48 @@ def build_chain() -> Any:
     Use the vision-capable DeepSeek Flash model named
     ``deepseek-v4-flash-vision-exp``. The API key is loaded from .env.
     """
-    ### YOUR CODE HERE
-    return None
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_deepseek import ChatDeepSeek
+
+    llm = ChatDeepSeek(
+        model="deepseek-v4-flash-vision-exp",
+        temperature=0,
+    )
+  
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """
+                    You are a precise receipt data extraction engine. The provided image is a receipt.
+
+                    Extract the following two monetary fields and return ONLY a JSON object with no additional text, markdown, or explanation.
+
+                    Field definitions:
+                    - "amount_paid_after_rounding": The final amount the customer actually paid after any rounding adjustments.
+                    - "amount_without_discounts": The sum of original positive item prices before all discounts. Add back promotions, coupons, member discounts, app discounts, packaging-damage discounts, and percentage discounts. Do not add back rounding.
+
+                    Output format (JSON only):
+                    {{
+                    "amount_paid_after_rounding": <number>,
+                    "amount_without_discounts": <number>
+                    }}
+                """,
+            ),
+            (
+                "human",
+                [
+                    {
+                        "type": "text",
+                        "text": "Read this receipt image and extract the required amounts. Filename: {filename}",
+                    },
+                    {"type": "image_url", "image_url": {"url": "{image_url}"}},
+                ],
+            ),
+        ]
+    )
+
+    return prompt | llm
 
 
 def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
@@ -78,9 +117,27 @@ def answer_queries(chain: Any, images: list[Path]) -> dict[str, Any]:
     multimodal human messages. LangChain's ``batch`` method is one simple way
     to process independent receipt-extraction prompts in parallel.
     """
-    ### YOUR CODE HERE
-    _ = (chain, images)
-    return {QUERY_1: DUMMY_RESPONSE, QUERY_2: DUMMY_RESPONSE}
+    inputs = [
+        {
+            "filename": path.name,
+            "image_url": image_data_url(path),
+        }
+        for path in images
+    ]
+
+    responses = chain.batch(inputs)
+    total_spent = Decimal("0.00")
+    total_without_discount = Decimal("0.00")
+
+    for response in responses:
+        data = json.loads(response_text(response))
+        total_spent += Decimal(str(data["amount_paid_after_rounding"]))
+        total_without_discount += Decimal(str(data["amount_without_discounts"]))
+
+    return {
+        QUERY_1: f"HK${total_spent:.2f}",
+        QUERY_2: f"HK${total_without_discount:.2f}",
+    }
 
 
 # Everything below is provided runner/scoring code. No edits are needed.
